@@ -1,0 +1,25 @@
+.timer-container {
+  background: white;
+  padding: 15px;
+  border-radius: 8px;
+  text-align: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.timer-display {
+  font-size: 2em;
+  font-weight: bold;
+  color: #6200ee;
+  margin: 10px 0;
+}
+
+.time-up {
+  color: #ff3d00;
+  font-weight: bold;
+  animation: pulse 0.5s infinite alternate;
+}
+
+@keyframes pulse {
+  from { opacity: 1; }
+  to { opacity: 0.5; }
+}
