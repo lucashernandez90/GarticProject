@@ -1,18 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import './Timer.css';
 
-export default function Timer({ duration }) {
+export default function Timer({ duration, onTimeEnd }) {
   const [timeLeft, setTimeLeft] = useState(duration);
 
   useEffect(() => {
-    if (timeLeft <= 0) return;
+    if (timeLeft <= 0) {
+      onTimeEnd && onTimeEnd();
+      return;
+    }
     
     const timer = setInterval(() => {
       setTimeLeft(prev => prev - 1);
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timeLeft]);
+  }, [timeLeft, onTimeEnd]);
 
   return (
     <div className="timer-container">

@@ -32,6 +32,10 @@ function startNewRound() {
   gameState.correctGuessers.clear();
   gameState.currentWord = getRandomWord();
   
+  console.log('-----------------------------------');
+  console.log('NOVA RODADA - PALAVRA SORTEADA:', gameState.currentWord);
+  console.log('-----------------------------------');
+
   // Encontra o próximo artista válido
   let nextArtist = null;
   while (gameState.artistQueue.length > 0 && !nextArtist) {
@@ -63,6 +67,8 @@ function startNewRound() {
       isArtist: true
     });
 
+    console.log(`Artista definido: ${nextArtist} - Palavra: ${gameState.currentWord}`);
+
     io.emit('new_artist', {
       artistId: gameState.currentArtist,
       artistName: gameState.players.get(gameState.currentArtist).name
@@ -72,6 +78,8 @@ function startNewRound() {
     gameState.roundTimer = setTimeout(() => {
       endRound(null);
     }, gameState.roundTime);
+
+    console.log(`Novo artista: ${nextArtist} - Palavra: ${gameState.currentWord}`);
   } else {
     // Se o artista não está mais conectado, tenta novamente
     gameState.players.delete(nextArtist);
@@ -91,18 +99,24 @@ function endRound(winnerSocket) {
     word: gameState.currentWord
   });
 
+  gameState.artistQueue = gameState.artistQueue.filter(id => id !== gameState.currentArtist);
+  
+  // Limpa os palpites corretos
+  gameState.correctGuessers.clear();
+
+  console.log('Rodada encerrada. Palavra era:', gameState.currentWord);
+
   // Espera 5 segundos antes de iniciar nova rodada
   setTimeout(startNewRound, 5000);
 }
 
 io.on('connection', (socket) => {
+  console.log('Novo jogador conectado:', socket.id);
   if (gameState.players.size >= 5) {
     socket.emit('sala_cheia');
     socket.disconnect(true);
     return;
   }
-
-  console.log('Novo jogador conectado:', socket.id);
 
   // Registra o novo jogador
   gameState.players.set(socket.id, {
@@ -115,8 +129,27 @@ io.on('connection', (socket) => {
 
   // Inicia jogo se for o primeiro jogador
   if (gameState.players.size === 1) {
+    gameState.currentArtist = socket.id;
+    gameState.currentWord = getRandomWord();
     startNewRound();
+
+    socket.emit('set_artist', {
+      word: gameState.currentWord,
+      isArtist: true
+    });
+
+    console.log(`Artista inicial definido: ${socket.id} - Palavra: ${gameState.currentWord}`);
+
+    gameState.roundTimer = setTimeout(() => {
+      endRound(null);
+    }, gameState.roundTime);
   }
+
+  socket.on('time_ended', () => {
+    if (socket.id === gameState.currentArtist) {
+      endRound(null); // Força o fim da rodada sem vencedor
+    }
+  });
 
   socket.on('desenhar', (data) => {
     if (socket.id === gameState.currentArtist) {
@@ -125,6 +158,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('enviar_palpite', (palpite) => {
+    const player = gameState.players.get(socket.id);
+    
+    // Log do palpite recebido (mesmo os errados)
+    console.log(`Palpite recebido de ${player.name}: "${palpite}" (Palavra correta: ${gameState.currentWord})`);
+
     if (socket.id === gameState.currentArtist) {
       socket.emit('erro', 'O artista não pode enviar palpites!');
       return;
@@ -134,7 +172,6 @@ io.on('connection', (socket) => {
         !gameState.correctGuessers.has(socket.id)) {
       
       gameState.correctGuessers.add(socket.id);
-      const player = gameState.players.get(socket.id);
       player.score += 10;
 
       io.emit('palpite_correto', {
@@ -143,7 +180,6 @@ io.on('connection', (socket) => {
         score: player.score
       });
 
-      // Verifica se todos acertaram (todos exceto o artista)
       if (gameState.correctGuessers.size === gameState.players.size - 1) {
         endRound(socket);
       }

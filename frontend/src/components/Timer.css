@@ -1,25 +1,94 @@
 .timer-container {
-  background: white;
-  padding: 15px;
-  border-radius: 8px;
+  background: linear-gradient(135deg, #6200ee 0%, #3700b3 100%);
+  padding: 20px;
+  border-radius: 10px;
   text-align: center;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+
+.timer-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.timer-label {
+  font-size: 1rem;
+  font-weight: 500;
+  margin-bottom: 5px;
+  opacity: 0.9;
+  letter-spacing: 0.5px;
 }
 
 .timer-display {
-  font-size: 2em;
-  font-weight: bold;
-  color: #6200ee;
+  font-size: 2.5rem;
+  font-weight: 700;
   margin: 10px 0;
+  font-family: 'Courier New', monospace;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .time-up {
-  color: #ff3d00;
-  font-weight: bold;
-  animation: pulse 0.5s infinite alternate;
+  color: #ffeb3b;
+  animation: pulse 0.8s infinite alternate;
+}
+
+.timer-progress {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  margin-top: 15px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.timer-progress-bar {
+  height: 100%;
+  background: white;
+  width: 100%;
+  transition: width 1s linear;
+}
+
+.round-info {
+  font-size: 0.9rem;
+  margin-top: 10px;
+  opacity: 0.8;
 }
 
 @keyframes pulse {
-  from { opacity: 1; }
-  to { opacity: 0.5; }
+  from { 
+    transform: scale(1);
+    text-shadow: 0 0 5px rgba(255, 235, 59, 0.5);
+  }
+  to { 
+    transform: scale(1.05);
+    text-shadow: 0 0 15px rgba(255, 235, 59, 0.8);
+  }
+}
+
+/* Efeito de onda quando o tempo está acabando */
+.timer-warning::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 61, 0, 0.1);
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0);
+  animation: wave 2s infinite;
+}
+
+@keyframes wave {
+  to {
+    transform: translate(-50%, -50%) scale(1.5);
+    opacity: 0;
+  }
 }
