@@ -1,9 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import io from 'socket.io-client';
 import './Canvas.css';
 import ArtistInfo from './ArtistInfo';
-
-const socket = io('http://localhost:3001');
+import socket from '../socket'; // Usa o socket centralizado
 
 export default function Canvas() {
   const canvasRef = useRef(null);
@@ -20,16 +18,25 @@ export default function Canvas() {
   const [isArtist, setIsArtist] = useState(false);
   const [wordToDraw, setWordToDraw] = useState('');
 
-  // Salva estado atual do canvas
+  /**
+   * Salva uma cópia do estado atual do canvas (para restaurar depois)
+   */
   const saveCanvasSnapshot = () => {
     const canvas = canvasRef.current;
-    canvasSnapshotRef.current = canvas.toDataURL();
+    if (canvas) {
+      canvasSnapshotRef.current = canvas.toDataURL();
+    }
   };
 
-  // Restaura canvas a partir do snapshot
+  /**
+   * Restaura o canvas a partir do último snapshot salvo
+   */
   const restoreCanvasSnapshot = () => {
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
+
+    if (!canvas || !ctx || !canvasSnapshotRef.current) return;
+
     const img = new Image();
     img.onload = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -38,46 +45,47 @@ export default function Canvas() {
     img.src = canvasSnapshotRef.current;
   };
 
+  /**
+   * Inicia o desenho quando o usuário pressiona o botão do mouse
+   */
   const startDrawing = (e) => {
     if (!isArtist || e.button !== 0) return;
 
-    if (e.button !== 0) {
-      console.log('Apenas botão esquerdo do mouse permitido');
-      return;
-    } 
     isDrawingRef.current = true;
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
+
+    if (!canvas || !ctx) return;
+
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    console.log('Start drawing at', { x, y }); // Debug
-
     saveCanvasSnapshot();
 
-    if (isErasing) {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.strokeStyle = 'rgba(0,0,0,1)';
-    } else {
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.strokeStyle = color;
-    }
-
+    ctx.globalCompositeOperation = isErasing ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = isErasing ? 'rgba(0,0,0,1)' : color;
     ctx.lineWidth = isErasing ? 20 : brushSize;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+
     ctx.beginPath();
     ctx.moveTo(x, y);
     lastPositionRef.current = { x, y };
     accumulatedPointsRef.current = [{ x, y }];
   };
 
+  /**
+   * Desenha enquanto o usuário move o mouse
+   */
   const draw = (e) => {
     if (!isDrawingRef.current || !isArtist) return;
 
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
+
+    if (!canvas || !ctx) return;
+
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -87,6 +95,7 @@ export default function Canvas() {
     lastPositionRef.current = { x, y };
     accumulatedPointsRef.current.push({ x, y });
 
+    // Envia os pontos ao servidor periodicamente
     if (Date.now() - lastSendRef.current > 30) {
       if (accumulatedPointsRef.current.length > 1) {
         socket.emit('desenhar', {
@@ -97,11 +106,15 @@ export default function Canvas() {
           size: isErasing ? 20 : brushSize
         });
       }
+
       accumulatedPointsRef.current = [lastPositionRef.current];
       lastSendRef.current = Date.now();
     }
   };
 
+  /**
+   * Finaliza o desenho ao soltar o botão do mouse
+   */
   const stopDrawing = () => {
     isDrawingRef.current = false;
 
@@ -114,68 +127,82 @@ export default function Canvas() {
         size: isErasing ? 20 : brushSize
       });
     }
+
     accumulatedPointsRef.current = [];
     saveCanvasSnapshot();
   };
 
+  /**
+   * Alterna entre caneta e borracha
+   */
   const handleToolChange = () => {
-    setIsErasing(prev => !prev);
+    setIsErasing((prev) => !prev);
   };
 
+  /**
+   * Limpa o canvas e notifica o servidor
+   */
   const clearCanvas = () => {
     const ctx = ctxRef.current;
-    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    const canvas = canvasRef.current;
+
+    if (ctx && canvas) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
     socket.emit('limpar_canvas');
   };
 
+  /**
+   * Configura o canvas inicialmente
+   */
   useEffect(() => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
+
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
     canvas.width = 800;
     canvas.height = 600;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctxRef.current = ctx;
 
+    // Debugging
     canvas.addEventListener('mousedown', (e) => console.log('Canvas mousedown', e));
     canvas.addEventListener('mousemove', (e) => console.log('Canvas mousemove', e));
-  }, []);
-
-  useEffect(() => {
-    socket.on('sala_cheia', () => {
-      alert('A sala já está cheia! Tente novamente mais tarde.');
-    });
 
     return () => {
-      socket.off('sala_cheia');
+      canvas.removeEventListener('mousedown', (e) => console.log('Canvas mousedown', e));
+      canvas.removeEventListener('mousemove', (e) => console.log('Canvas mousemove', e));
     };
   }, []);
 
-
+  /**
+   * Listener para eventos do socket
+   */
   useEffect(() => {
-    socket.on('set_artist', ({ word, isArtist }) => {
-      console.log('SET_ARTIST EVENT RECEIVED', { word, isArtist }); // Debug
+    const handleSetArtist = ({ word, isArtist }) => {
+      console.log('SET_ARTIST EVENT RECEIVED:', { word, isArtist });
       setIsArtist(isArtist);
       setWordToDraw(word);
-      
+
       if (isArtist) {
-        console.log('Agora você é o artista! Palavra:', word);
-        // Habilita o canvas para desenho
         const canvas = canvasRef.current;
-        canvas.style.pointerEvents = 'auto';
+        if (canvas) {
+          canvas.style.pointerEvents = 'auto';
+          console.log('Canvas ativado para o novo artista');
+        }
       }
-    });
+    };
 
-    socket.on('connect', () => {
-      console.log('Conectado ao servidor com ID:', socket.id);
-   });
-
-    socket.on('new_artist', () => {
+    const handleNewArtist = () => {
       setIsArtist(false);
       setWordToDraw('');
-    });
+    };
 
-    socket.on('atualizar_desenho', ({ points, color, size, isErasing }) => {
+    const handleUpdateDrawing = ({ points, color, size, isErasing }) => {
       const ctx = ctxRef.current;
       if (!ctx || points.length < 2) return;
 
@@ -191,63 +218,100 @@ export default function Canvas() {
       }
 
       ctx.stroke();
-    });
+    };
 
-    socket.on('canvas_limpo', () => {
+    const handleClearCanvas = () => {
       const ctx = ctxRef.current;
-      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    });
+      const canvas = canvasRef.current;
+      if (ctx && canvas) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    };
+
+    socket.on('set_artist', handleSetArtist);
+    socket.on('new_artist', handleNewArtist);
+    socket.on('atualizar_desenho', handleUpdateDrawing);
+    socket.on('canvas_limpo', handleClearCanvas);
 
     return () => {
-      socket.off('set_artist');
-      socket.off('new_artist');
-      socket.off('atualizar_desenho');
-      socket.off('canvas_limpo');
+      socket.off('set_artist', handleSetArtist);
+      socket.off('new_artist', handleNewArtist);
+      socket.off('atualizar_desenho', handleUpdateDrawing);
+      socket.off('canvas_limpo', handleClearCanvas);
     };
   }, []);
 
-return (
-  <div className="canvas-container">
-    <ArtistInfo isArtist={isArtist} wordToDraw={wordToDraw} />
-    
-    <canvas
-      className="drawing-canvas"
-      ref={canvasRef}
-      onMouseDown={startDrawing}
-      onMouseMove={draw}
-      onMouseUp={stopDrawing}
-      onMouseLeave={stopDrawing}
-    />
+  /**
+   * Vincula/desvincula eventos do canvas dinamicamente
+   */
+  useEffect(() => {
+    const canvas = canvasRef.current;
 
-    {isArtist && (
-      <div className="tools">
-        <button onClick={handleToolChange} className="tool-button">
-          {isErasing ? 'Caneta' : 'Borracha'}
-        </button>
-        <input
-          type="color"
-          disabled={isErasing}
-          value={color}
-          onChange={(e) => setColor(e.target.value)}
-          className="color-picker"
-        />
-        <div className="brush-size-container">
-          <span>Tamanho:</span>
+    if (!canvas || !isArtist) return;
+
+    const onMouseDown = (e) => startDrawing(e);
+    const onMouseMove = (e) => draw(e);
+    const onMouseUp = () => stopDrawing();
+    const onMouseLeave = () => stopDrawing();
+
+    canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mouseup', onMouseUp);
+    canvas.addEventListener('mouseleave', onMouseLeave);
+
+    return () => {
+      canvas.removeEventListener('mousedown', onMouseDown);
+      canvas.removeEventListener('mousemove', onMouseMove);
+      canvas.removeEventListener('mouseup', onMouseUp);
+      canvas.removeEventListener('mouseleave', onMouseLeave);
+    };
+  }, [isArtist]);
+
+  return (
+    <div className="canvas-container">
+      <ArtistInfo isArtist={isArtist} wordToDraw={wordToDraw} />
+
+      <canvas
+        className="drawing-canvas"
+        ref={canvasRef}
+        style={{
+          pointerEvents: isArtist ? 'auto' : 'none'
+        }}
+        onMouseDown={startDrawing}
+        onMouseMove={draw}
+        onMouseUp={stopDrawing}
+        onMouseLeave={stopDrawing}
+      />
+
+      {isArtist && (
+        <div className="tools">
+          <button onClick={handleToolChange} className="tool-button">
+            {isErasing ? 'Caneta' : 'Borracha'}
+          </button>
           <input
-            type="range"
-            min="1"
-            max="30"
-            value={brushSize}
-            onChange={(e) => setBrushSize(parseInt(e.target.value))}
-            className="brush-slider"
+            type="color"
+            disabled={isErasing}
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+            className="color-picker"
           />
-          <span>{brushSize}px</span>
+          <div className="brush-size-container">
+            <span>Tamanho:</span>
+            <input
+              type="range"
+              min="1"
+              max="30"
+              value={brushSize}
+              onChange={(e) => setBrushSize(parseInt(e.target.value))}
+              className="brush-slider"
+            />
+            <span>{brushSize}px</span>
+          </div>
+          <button onClick={clearCanvas} className="clear-button">
+            Limpar
+          </button>
         </div>
-        <button onClick={clearCanvas} className="clear-button">
-          Limpar
-        </button>
-      </div>
-    )}
-  </div>
-);
+      )}
+    </div>
+  );
 }

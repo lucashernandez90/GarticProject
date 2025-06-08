@@ -153,38 +153,49 @@ io.on('connection', (socket) => {
 
   socket.on('desenhar', (data) => {
     if (socket.id === gameState.currentArtist) {
+      console.log('Desenho recebido do artista:', data.points.length, 'pontos');
       socket.broadcast.emit('atualizar_desenho', data);
     }
   });
 
-  socket.on('enviar_palpite', (palpite) => {
-    const player = gameState.players.get(socket.id);
-    
-    // Log do palpite recebido (mesmo os errados)
-    console.log(`Palpite recebido de ${player.name}: "${palpite}" (Palavra correta: ${gameState.currentWord})`);
+socket.on('enviar_palpite', (palpite) => {
+  const player = gameState.players.get(socket.id);
 
-    if (socket.id === gameState.currentArtist) {
-      socket.emit('erro', 'O artista não pode enviar palpites!');
-      return;
+  // Artista não pode enviar palpite
+  if (socket.id === gameState.currentArtist) {
+    socket.emit('erro', 'O artista não pode enviar palpites!');
+    return;
+  }
+
+  // Palpite duplicado
+  if (gameState.correctGuessers.has(socket.id)) {
+    return;
+  }
+
+  // Se for a palavra correta
+  if (palpite.toLowerCase() === gameState.currentWord.toLowerCase()) {
+    gameState.correctGuessers.add(socket.id);
+    player.score += 10;
+
+    io.emit('palpite_correto', {
+      playerId: socket.id,
+      playerName: player.name,
+      score: player.score
+    });
+
+    // Notifica todos que alguém acertou
+    if (gameState.correctGuessers.size === gameState.players.size - 1) {
+      endRound(socket);
     }
 
-    if (palpite.toLowerCase() === gameState.currentWord.toLowerCase() && 
-        !gameState.correctGuessers.has(socket.id)) {
-      
-      gameState.correctGuessers.add(socket.id);
-      player.score += 10;
-
-      io.emit('palpite_correto', {
-        playerId: socket.id,
-        playerName: player.name,
-        score: player.score
-      });
-
-      if (gameState.correctGuessers.size === gameState.players.size - 1) {
-        endRound(socket);
-      }
-    }
-  });
+  } else {
+    // Se for palpite errado, mostra no chat para todos
+    io.emit('palpite_errado', {
+      playerName: player.name,
+      guess: palpite
+    });
+  }
+});
 
   socket.on('disconnect', () => {
     const wasArtist = socket.id === gameState.currentArtist;
