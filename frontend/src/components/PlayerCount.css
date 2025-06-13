@@ -1,0 +1,11 @@
+.player-count {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background-color: #42a5f5;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 15px;
+  font-size: 14px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}

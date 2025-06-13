@@ -12,204 +12,279 @@ const io = socketIO(server, {
   }
 });
 
-// Estado do jogo melhorado
+// Configurações do jogo
+const MAX_PLAYERS = 5;
+const MIN_PLAYERS = 2;
+const ROUND_TIME = 120000;
+const MAX_ROUNDS = 5;
+const DELAY_BETWEEN_ROUNDS = 5000;
+
+// Estado do jogo
 const gameState = {
-  currentArtist: null,
+  artist: null,
+  potentialArtist: null, 
   currentWord: '',
   players: new Map(),
   correctGuessers: new Set(),
-  artistQueue: [],
   roundTimer: null,
-  roundTime: 120000 // 2 minutos por rodada
+  roundsPlayed: 0,
+  gameStarted: false,
+  isWaiting: true,
+  countdown: null
 };
 
 function getRandomWord() {
   return palavras[Math.floor(Math.random() * palavras.length)];
 }
 
-function startNewRound() {
-  // Limpa estado da rodada anterior
-  gameState.correctGuessers.clear();
-  gameState.currentWord = getRandomWord();
+function updateAllPlayers() {
+  io.emit('player_count', {
+    current: gameState.players.size,
+    max: MAX_PLAYERS
+  });
   
-  console.log('-----------------------------------');
-  console.log('NOVA RODADA - PALAVRA SORTEADA:', gameState.currentWord);
-  console.log('-----------------------------------');
-
-  // Encontra o próximo artista válido
-  let nextArtist = null;
-  while (gameState.artistQueue.length > 0 && !nextArtist) {
-    const candidateId = gameState.artistQueue.shift();
-    if (gameState.players.has(candidateId)) {
-      nextArtist = candidateId;
+  gameState.players.forEach((player, socketId) => {
+    const socket = io.sockets.sockets.get(socketId);
+    if (socket) {
+      socket.emit('player_update', {
+        isArtist: socketId === gameState.artist,
+        currentRound: gameState.roundsPlayed + 1
+      });
     }
+  });
+}
+
+function startCountdown() {
+  let count = 5;
+  
+  gameState.countdown = setInterval(() => {
+    io.emit('countdown', { count });
+    
+    if (count <= 0) {
+      clearInterval(gameState.countdown);
+      // Define o artista oficialmente aqui
+      gameState.artist = gameState.potentialArtist;
+      gameState.players.get(gameState.artist).isArtist = true;
+      gameState.gameStarted = true;
+      io.emit('game_started'); 
+      startNewRound();
+      return;
+    }
+    
+    count--;
+  }, 1000);
+}
+
+function startNewRound() {
+  if (gameState.roundsPlayed === 0) {
+    // Primeira rodada - define o artista
+    gameState.artist = gameState.potentialArtist;
+    gameState.players.get(gameState.artist).isArtist = true;
+    gameState.gameStarted = true;
+    io.emit('game_started');
   }
 
-  // Se não encontrou na fila, recria com jogadores ativos
-  if (!nextArtist && gameState.players.size > 0) {
-    gameState.artistQueue = Array.from(gameState.players.keys());
-    nextArtist = gameState.artistQueue.shift();
-  }
+  setTimeout(() => {
+    _startRoundLogic();
+  }, 500);
+}
 
-  // Se não há jogadores, encerra
-  if (!nextArtist) {
-    gameState.currentArtist = null;
+function _startRoundLogic() {
+  if (gameState.roundsPlayed >= MAX_ROUNDS) {
+    io.emit('game_over', { scores: Array.from(gameState.players.values()) });
     return;
   }
 
-  gameState.currentArtist = nextArtist;
-  const artistSocket = io.sockets.sockets.get(nextArtist);
+  gameState.correctGuessers.clear();
+  gameState.currentWord = getRandomWord();
+  gameState.isWaiting = false;
+  
+  const currentRound = gameState.roundsPlayed + 1;
 
-  // Verifica se o socket ainda está conectado
-  if (artistSocket && artistSocket.connected) {
-    artistSocket.emit('set_artist', { 
-      word: gameState.currentWord,
-      isArtist: true
-    });
+  console.log('-----------------------------------');
+  console.log(`INICIANDO RODADA ${currentRound}/${MAX_ROUNDS}`);
+  console.log('ARTISTA:', gameState.artist);
+  console.log('PALAVRA SORTEADA:', gameState.currentWord);
+  console.log('-----------------------------------');
 
-    console.log(`Artista definido: ${nextArtist} - Palavra: ${gameState.currentWord}`);
+  io.emit('canvas_limpo');
 
-    io.emit('new_artist', {
-      artistId: gameState.currentArtist,
-      artistName: gameState.players.get(gameState.currentArtist).name
-    });
-
-    // Inicia temporizador da rodada
-    gameState.roundTimer = setTimeout(() => {
-      endRound(null);
-    }, gameState.roundTime);
-
-    console.log(`Novo artista: ${nextArtist} - Palavra: ${gameState.currentWord}`);
-  } else {
-    // Se o artista não está mais conectado, tenta novamente
-    gameState.players.delete(nextArtist);
-    startNewRound();
+  if (gameState.artist) {
+    const artistSocket = io.sockets.sockets.get(gameState.artist);
+    if (artistSocket) {
+      artistSocket.emit('set_artist', {
+        word: gameState.currentWord,
+        isArtist: true,
+        isFirstRound: gameState.roundsPlayed === 0
+      });
+      
+      // Força uma atualização imediata
+      artistSocket.emit('player_update', {
+        isArtist: true,
+        currentRound: gameState.roundsPlayed + 1
+      });
+    }
   }
+
+  io.emit('new_round', {
+    artistName: gameState.players.get(gameState.artist)?.name || 'Artista',
+    currentRound: currentRound
+  });
+
+  io.emit('player_count', { 
+    current: gameState.players.size,
+    max: MAX_PLAYERS 
+  });
+
+  if (gameState.roundTimer) clearTimeout(gameState.roundTimer);
+  gameState.roundTimer = setTimeout(() => endRound(null), ROUND_TIME);
 }
 
 function endRound(winnerSocket) {
-  if (gameState.roundTimer) {
-    clearTimeout(gameState.roundTimer);
-    gameState.roundTimer = null;
-  }
-  
+  clearTimeout(gameState.roundTimer);
+
   const winner = winnerSocket ? gameState.players.get(winnerSocket.id) : null;
+  
   io.emit('round_end', {
     winner: winner,
-    word: gameState.currentWord
+    word: gameState.currentWord,
+    roundsPlayed: gameState.roundsPlayed + 1,
+    maxRounds: MAX_ROUNDS
   });
 
-  gameState.artistQueue = gameState.artistQueue.filter(id => id !== gameState.currentArtist);
-  
-  // Limpa os palpites corretos
-  gameState.correctGuessers.clear();
+  console.log(`Rodada ${gameState.roundsPlayed + 1} encerrada. Palavra: ${gameState.currentWord}`);
 
-  console.log('Rodada encerrada. Palavra era:', gameState.currentWord);
+  gameState.roundsPlayed++;
 
-  // Espera 5 segundos antes de iniciar nova rodada
-  setTimeout(startNewRound, 5000);
+  if (gameState.roundsPlayed < MAX_ROUNDS) {
+    setTimeout(startNewRound, DELAY_BETWEEN_ROUNDS);
+  } else {
+    io.emit('game_over', { 
+      scores: Array.from(gameState.players.values()) 
+    });
+  }
 }
 
 io.on('connection', (socket) => {
   console.log('Novo jogador conectado:', socket.id);
-  if (gameState.players.size >= 5) {
-    socket.emit('sala_cheia');
-    socket.disconnect(true);
+
+  if (gameState.players.size >= MAX_PLAYERS) {
+    socket.emit('room_full');
+    socket.disconnect();
+    console.log(`Sala cheia. Conexão recusada para: ${socket.id}`);
     return;
   }
 
-  // Registra o novo jogador
-  gameState.players.set(socket.id, {
-    name: `Jogador ${Math.floor(Math.random() * 1000)}`,
-    score: 0
-  });
-
-  // Adiciona à fila de artistas
-  gameState.artistQueue.push(socket.id);
-
-  // Inicia jogo se for o primeiro jogador
-  if (gameState.players.size === 1) {
-    gameState.currentArtist = socket.id;
-    gameState.currentWord = getRandomWord();
-    startNewRound();
-
-    socket.emit('set_artist', {
-      word: gameState.currentWord,
-      isArtist: true
-    });
-
-    console.log(`Artista inicial definido: ${socket.id} - Palavra: ${gameState.currentWord}`);
-
-    gameState.roundTimer = setTimeout(() => {
-      endRound(null);
-    }, gameState.roundTime);
+  // Marca o primeiro jogador como potencial artista
+  if (gameState.players.size === 0) {
+    gameState.potentialArtist = socket.id;
+    console.log(`Potencial artista definido: ${socket.id}`);
   }
 
-  socket.on('time_ended', () => {
-    if (socket.id === gameState.currentArtist) {
-      endRound(null); // Força o fim da rodada sem vencedor
-    }
+  gameState.players.set(socket.id, {
+    name: `Jogador ${gameState.players.size + 1}`,
+    score: 0,
+    isArtist: false // Só será true quando o jogo começar
   });
+
+  updateAllPlayers();
+
+  if (gameState.isWaiting && gameState.players.size >= MIN_PLAYERS && !gameState.gameStarted) {
+    console.log(`Jogadores suficientes (${gameState.players.size}). Iniciando contagem regressiva...`);
+    clearInterval(gameState.countdown);
+    startCountdown();
+  } else if (gameState.isWaiting) {
+    io.emit('waiting_players', {
+      current: gameState.players.size,
+      needed: MIN_PLAYERS
+    });
+  }
 
   socket.on('desenhar', (data) => {
-    if (socket.id === gameState.currentArtist) {
-      console.log('Desenho recebido do artista:', data.points.length, 'pontos');
-      socket.broadcast.emit('atualizar_desenho', data);
+    if (socket.id === gameState.artist) {
+      console.log('Transmitindo desenho:', {
+        points: data.points?.length,
+        artist: socket.id,
+        toPlayers: gameState.players.size - 1
+      });
+      
+      // Transmite para TODOS os outros jogadores (broadcast)
+      socket.broadcast.emit('atualizar_desenho', {
+        points: data.points,
+        color: data.color,
+        size: data.size,
+        isErasing: data.isErasing,
+        timestamp: Date.now() // Para debug
+      });
     }
   });
 
-socket.on('enviar_palpite', (palpite) => {
-  const player = gameState.players.get(socket.id);
+  socket.on('limpar_canvas', () => {
+    if (socket.id === gameState.artist && gameState.gameStarted) {
+      io.emit('canvas_limpo');
+    }
+  });
 
-  // Artista não pode enviar palpite
-  if (socket.id === gameState.currentArtist) {
-    socket.emit('erro', 'O artista não pode enviar palpites!');
-    return;
-  }
-
-  // Palpite duplicado
-  if (gameState.correctGuessers.has(socket.id)) {
-    return;
-  }
-
-  // Se for a palavra correta
-  if (palpite.toLowerCase() === gameState.currentWord.toLowerCase()) {
-    gameState.correctGuessers.add(socket.id);
-    player.score += 10;
-
-    io.emit('palpite_correto', {
-      playerId: socket.id,
-      playerName: player.name,
-      score: player.score
+  socket.on('request_artist_status', () => {
+    socket.emit('artist_status', {
+      isArtist: socket.id === gameState.artist,
+      word: gameState.currentWord
     });
+  });
 
-    // Notifica todos que alguém acertou
-    if (gameState.correctGuessers.size === gameState.players.size - 1) {
-      endRound(socket);
+  socket.on('enviar_palpite', (palpite) => {
+    const player = gameState.players.get(socket.id);
+
+    if (socket.id === gameState.artist) {
+      socket.emit('erro', 'Você é o artista e não pode palpitar!');
+      return;
     }
 
-  } else {
-    // Se for palpite errado, mostra no chat para todos
-    io.emit('palpite_errado', {
-      playerName: player.name,
-      guess: palpite
-    });
-  }
-});
+    if (gameState.correctGuessers.has(socket.id)) return;
+
+    if (palpite.toLowerCase() === gameState.currentWord.toLowerCase()) {
+      gameState.correctGuessers.add(socket.id);
+      player.score += 10;
+
+      io.emit('palpite_correto', {
+        playerId: socket.id,
+        playerName: player.name,
+        score: player.score
+      });
+
+      if (gameState.correctGuessers.size === gameState.players.size - 1) {
+        endRound(socket);
+      }
+    } else {
+      io.emit('palpite_errado', {
+        playerName: player.name,
+        guess: palpite
+      });
+    }
+  });
 
   socket.on('disconnect', () => {
-    const wasArtist = socket.id === gameState.currentArtist;
+    const wasArtist = socket.id === gameState.artist;
     gameState.players.delete(socket.id);
     
-    // Remove da fila de artistas
-    gameState.artistQueue = gameState.artistQueue.filter(id => id !== socket.id);
+    io.emit('player_count', { 
+      current: gameState.players.size,
+      max: MAX_PLAYERS 
+    });
 
     if (wasArtist) {
-      if (gameState.roundTimer) {
-        clearTimeout(gameState.roundTimer);
-        gameState.roundTimer = null;
-      }
-      startNewRound();
+      io.emit('artist_left');
+      console.log('Artista saiu. Jogo encerrado.');
+      if (gameState.roundTimer) clearTimeout(gameState.roundTimer);
+      if (gameState.countdown) clearInterval(gameState.countdown);
+    }
+    
+    if (gameState.players.size < MIN_PLAYERS && gameState.gameStarted) {
+      gameState.isWaiting = true;
+      io.emit('waiting_players', {
+        current: gameState.players.size,
+        needed: MIN_PLAYERS
+      });
     }
   });
 });

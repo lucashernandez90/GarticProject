@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import './Canvas.css';
 import ArtistInfo from './ArtistInfo';
-import socket from '../socket'; // Usa o socket centralizado
+import socket from '../socket';
 
 export default function Canvas() {
+  // Refs
   const canvasRef = useRef(null);
   const ctxRef = useRef(null);
   const isDrawingRef = useRef(false);
@@ -12,15 +13,15 @@ export default function Canvas() {
   const accumulatedPointsRef = useRef([]);
   const canvasSnapshotRef = useRef(null);
 
+  // States
   const [color, setColor] = useState('#000000');
   const [brushSize, setBrushSize] = useState(5);
   const [isErasing, setIsErasing] = useState(false);
   const [isArtist, setIsArtist] = useState(false);
   const [wordToDraw, setWordToDraw] = useState('');
+  const [gameStarted, setGameStarted] = useState(false);
 
-  /**
-   * Salva uma cópia do estado atual do canvas (para restaurar depois)
-   */
+  // Funções auxiliares
   const saveCanvasSnapshot = () => {
     const canvas = canvasRef.current;
     if (canvas) {
@@ -28,13 +29,9 @@ export default function Canvas() {
     }
   };
 
-  /**
-   * Restaura o canvas a partir do último snapshot salvo
-   */
   const restoreCanvasSnapshot = () => {
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
-
     if (!canvas || !ctx || !canvasSnapshotRef.current) return;
 
     const img = new Image();
@@ -45,16 +42,43 @@ export default function Canvas() {
     img.src = canvasSnapshotRef.current;
   };
 
-  /**
-   * Inicia o desenho quando o usuário pressiona o botão do mouse
-   */
+  const drawRemoteLine = (ctx, points, color, size, isErasing) => {
+    if (!ctx || !Array.isArray(points) || points.length < 2) {
+      console.warn('Dados de desenho inválidos:', { points });
+      return;
+    }
+
+    try {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      
+      ctx.globalCompositeOperation = isErasing ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = isErasing ? 'rgba(0,0,0,1)' : color;
+      ctx.lineWidth = size;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      for (let i = 1; i < points.length; i++) {
+        if (!points[i]) continue;
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+
+      ctx.stroke();
+      ctx.closePath();
+      ctx.restore();
+    } catch (error) {
+      console.error('Erro ao renderizar desenho remoto:', error);
+    }
+  };
+
+  // Funções de desenho
   const startDrawing = (e) => {
-    if (!isArtist || e.button !== 0) return;
+    if (!isArtist || !gameStarted || e.button !== 0) return;
 
     isDrawingRef.current = true;
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
-
     if (!canvas || !ctx) return;
 
     const rect = canvas.getBoundingClientRect();
@@ -75,15 +99,11 @@ export default function Canvas() {
     accumulatedPointsRef.current = [{ x, y }];
   };
 
-  /**
-   * Desenha enquanto o usuário move o mouse
-   */
   const draw = (e) => {
-    if (!isDrawingRef.current || !isArtist) return;
+    if (!isDrawingRef.current || !isArtist || !gameStarted) return;
 
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
-
     if (!canvas || !ctx) return;
 
     const rect = canvas.getBoundingClientRect();
@@ -95,7 +115,6 @@ export default function Canvas() {
     lastPositionRef.current = { x, y };
     accumulatedPointsRef.current.push({ x, y });
 
-    // Envia os pontos ao servidor periodicamente
     if (Date.now() - lastSendRef.current > 30) {
       if (accumulatedPointsRef.current.length > 1) {
         socket.emit('desenhar', {
@@ -112,9 +131,6 @@ export default function Canvas() {
     }
   };
 
-  /**
-   * Finaliza o desenho ao soltar o botão do mouse
-   */
   const stopDrawing = () => {
     isDrawingRef.current = false;
 
@@ -132,30 +148,21 @@ export default function Canvas() {
     saveCanvasSnapshot();
   };
 
-  /**
-   * Alterna entre caneta e borracha
-   */
+  // Funções de controle
   const handleToolChange = () => {
     setIsErasing((prev) => !prev);
   };
 
-  /**
-   * Limpa o canvas e notifica o servidor
-   */
   const clearCanvas = () => {
     const ctx = ctxRef.current;
     const canvas = canvasRef.current;
-
     if (ctx && canvas) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
-
     socket.emit('limpar_canvas');
   };
 
-  /**
-   * Configura o canvas inicialmente
-   */
+  // Handlers de eventos Socket.IO
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -169,95 +176,83 @@ export default function Canvas() {
     ctx.lineJoin = 'round';
     ctxRef.current = ctx;
 
-    // Debugging
-    canvas.addEventListener('mousedown', (e) => console.log('Canvas mousedown', e));
-    canvas.addEventListener('mousemove', (e) => console.log('Canvas mousemove', e));
-
-    return () => {
-      canvas.removeEventListener('mousedown', (e) => console.log('Canvas mousedown', e));
-      canvas.removeEventListener('mousemove', (e) => console.log('Canvas mousemove', e));
-    };
-  }, []);
-
-  /**
-   * Listener para eventos do socket
-   */
-  useEffect(() => {
-    const handleSetArtist = ({ word, isArtist }) => {
-      console.log('SET_ARTIST EVENT RECEIVED:', { word, isArtist });
-      setIsArtist(isArtist);
+    // Handlers definidos dentro do useEffect para evitar problemas de escopo
+    const handleSetArtist = ({ word, isArtist: isPlayerArtist, isFirstRound }) => {
+      console.log('set_artist recebido:', { word, isPlayerArtist });
+      setIsArtist(isPlayerArtist);
       setWordToDraw(word);
-
-      if (isArtist) {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          canvas.style.pointerEvents = 'auto';
-          console.log('Canvas ativado para o novo artista');
-        }
+      
+      if (isPlayerArtist) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        setGameStarted(true);
       }
     };
 
-    const handleNewArtist = () => {
-      setIsArtist(false);
-      setWordToDraw('');
-    };
-
-    const handleUpdateDrawing = ({ points, color, size, isErasing }) => {
-      const ctx = ctxRef.current;
-      if (!ctx || points.length < 2) return;
-
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-
-      ctx.globalCompositeOperation = isErasing ? 'destination-out' : 'source-over';
-      ctx.strokeStyle = isErasing ? 'rgba(0,0,0,1)' : color;
-      ctx.lineWidth = size;
-
-      for (let i = 1; i < points.length; i++) {
-        ctx.lineTo(points[i].x, points[i].y);
+    const handleUpdateDrawing = (data) => {
+      if (!isArtist) {
+        drawRemoteLine(ctx, data.points, data.color, data.size, data.isErasing);
       }
-
-      ctx.stroke();
     };
 
     const handleClearCanvas = () => {
-      const ctx = ctxRef.current;
-      const canvas = canvasRef.current;
-      if (ctx && canvas) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    };
+
+    const handlePlayerUpdate = ({ isArtist: isPlayerArtist }) => {
+      setIsArtist(isPlayerArtist);
+      if (isPlayerArtist) {
+        setGameStarted(true);
       }
     };
 
+    const handleGameStarted = () => {
+      setGameStarted(true);
+    };
+
+    const handleNewRound = () => {
+      socket.emit('request_artist_status');
+    };
+
+    // Configura listeners
     socket.on('set_artist', handleSetArtist);
-    socket.on('new_artist', handleNewArtist);
     socket.on('atualizar_desenho', handleUpdateDrawing);
     socket.on('canvas_limpo', handleClearCanvas);
+    socket.on('player_update', handlePlayerUpdate);
+    socket.on('game_started', handleGameStarted);
+    socket.on('new_round', handleNewRound);
+
+    // Verificação inicial
+    socket.emit('request_artist_status');
 
     return () => {
       socket.off('set_artist', handleSetArtist);
-      socket.off('new_artist', handleNewArtist);
       socket.off('atualizar_desenho', handleUpdateDrawing);
       socket.off('canvas_limpo', handleClearCanvas);
+      socket.off('player_update', handlePlayerUpdate);
+      socket.off('game_started', handleGameStarted);
+      socket.off('new_round', handleNewRound);
     };
-  }, []);
+  }, [isArtist]);
 
-  /**
-   * Vincula/desvincula eventos do canvas dinamicamente
-   */
+  // Efeito para eventos de mouse
   useEffect(() => {
     const canvas = canvasRef.current;
-
-    if (!canvas || !isArtist) return;
+    if (!canvas) return;
 
     const onMouseDown = (e) => startDrawing(e);
     const onMouseMove = (e) => draw(e);
     const onMouseUp = () => stopDrawing();
     const onMouseLeave = () => stopDrawing();
 
-    canvas.addEventListener('mousedown', onMouseDown);
-    canvas.addEventListener('mousemove', onMouseMove);
-    canvas.addEventListener('mouseup', onMouseUp);
-    canvas.addEventListener('mouseleave', onMouseLeave);
+    if (isArtist && gameStarted) {
+      canvas.style.pointerEvents = 'auto';
+      canvas.addEventListener('mousedown', onMouseDown);
+      canvas.addEventListener('mousemove', onMouseMove);
+      canvas.addEventListener('mouseup', onMouseUp);
+      canvas.addEventListener('mouseleave', onMouseLeave);
+    } else {
+      canvas.style.pointerEvents = 'none';
+    }
 
     return () => {
       canvas.removeEventListener('mousedown', onMouseDown);
@@ -265,7 +260,11 @@ export default function Canvas() {
       canvas.removeEventListener('mouseup', onMouseUp);
       canvas.removeEventListener('mouseleave', onMouseLeave);
     };
-  }, [isArtist]);
+  }, [isArtist, gameStarted, color, brushSize, isErasing]);
+
+  useEffect(() => {
+    console.log('Estado atual:', { isArtist, gameStarted, wordToDraw });
+  }, [isArtist, gameStarted, wordToDraw]);
 
   return (
     <div className="canvas-container">
@@ -274,16 +273,10 @@ export default function Canvas() {
       <canvas
         className="drawing-canvas"
         ref={canvasRef}
-        style={{
-          pointerEvents: isArtist ? 'auto' : 'none'
-        }}
-        onMouseDown={startDrawing}
-        onMouseMove={draw}
-        onMouseUp={stopDrawing}
-        onMouseLeave={stopDrawing}
+        style={{ pointerEvents: isArtist && gameStarted ? 'auto' : 'none' }}
       />
 
-      {isArtist && (
+      {isArtist && gameStarted && (
         <div className="tools">
           <button onClick={handleToolChange} className="tool-button">
             {isErasing ? 'Caneta' : 'Borracha'}

@@ -21,6 +21,8 @@
   touch-action: none;
   width: 800px;
   height: 500px; 
+  display: block; /* Garante que está visível */
+  background-color: white; /* Fundo branco para melhor visualização */
 }
 
 .drawing-canvas:hover {
@@ -207,4 +209,10 @@
   .brush-slider {
     width: 60px;
   }
+}
+
+/* Garante que o canvas do artista está sempre habilitado */
+.artist-tools-active {
+  opacity: 1 !important;
+  pointer-events: all !important;
 }

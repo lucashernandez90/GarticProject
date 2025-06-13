@@ -1,0 +1,74 @@
+.waiting-room {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background-color: #f0f2f5;
+}
+
+.loading-container {
+  background: white;
+  padding: 2rem;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  text-align: center;
+  max-width: 500px;
+  width: 90%;
+}
+
+.loader {
+  margin: 2rem 0;
+}
+
+.spinner {
+  border: 5px solid #f3f3f3;
+  border-top: 5px solid #42a5f5;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.player-count {
+  font-size: 1.2rem;
+  margin: 1rem 0;
+  color: #333;
+}
+
+.artist-info {
+  margin: 1.5rem 0;
+  padding: 0.8rem;
+  background: #e3f2fd;
+  border-radius: 5px;
+}
+
+.artist-info span {
+  font-weight: bold;
+  color: #1976d2;
+}
+
+.game-rules {
+  margin-top: 2rem;
+  text-align: left;
+  border-top: 1px solid #eee;
+  padding-top: 1rem;
+}
+
+.game-rules h3 {
+  color: #555;
+}
+
+.game-rules ul {
+  padding-left: 20px;
+}
+
+.game-rules li {
+  margin: 0.5rem 0;
+  color: #666;
+}
